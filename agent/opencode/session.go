@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/exec"
 "path/filepath"
@@ -24,32 +25,35 @@ import (
 // Each Send() launches a new `opencode run --format json` process
 // with --session for conversation continuity.
 type opencodeSession struct {
-	cmd      string
-	workDir  string
-	model    string
-	mode     string
-	extraEnv []string
-	events   chan core.Event
-	chatID   atomic.Value // stores string — OpenCode session ID
-	ctx      context.Context
-	cancel   context.CancelFunc
-	wg       sync.WaitGroup
-	alive    atomic.Bool
-	expectingContinue atomic.Bool // true when compaction_continue received, waiting for next step
+	cmd                 string
+	workDir             string
+	model               string
+	mode                string
+	extraEnv            []string
+	events              chan core.Event
+	chatID              atomic.Value // stores string — OpenCode session ID
+	permissionPort      int
+	permissionServerURL string
+	ctx                 context.Context
+	cancel              context.CancelFunc
+	wg                  sync.WaitGroup
+	alive               atomic.Bool
+	expectingContinue   atomic.Bool // true when compaction_continue received, waiting for next step
 }
 
-func newOpencodeSession(ctx context.Context, cmd, workDir, model, mode, resumeID string, extraEnv []string) (*opencodeSession, error) {
+func newOpencodeSession(ctx context.Context, cmd, workDir, model, mode string, permissionPort int, resumeID string, extraEnv []string) (*opencodeSession, error) {
 	sessionCtx, cancel := context.WithCancel(ctx)
 
 	s := &opencodeSession{
-		cmd:      cmd,
-		workDir:  workDir,
-		model:    model,
-		mode:     mode,
-		extraEnv: extraEnv,
-		events:   make(chan core.Event, 64),
-		ctx:      sessionCtx,
-		cancel:   cancel,
+		cmd:            cmd,
+		workDir:        workDir,
+		model:          model,
+		mode:           mode,
+		permissionPort: permissionPort,
+		extraEnv:       extraEnv,
+		events:         make(chan core.Event, 64),
+		ctx:            sessionCtx,
+		cancel:         cancel,
 	}
 	s.alive.Store(true)
 
@@ -163,6 +167,11 @@ func (s *opencodeSession) buildRunArgs(prompt string, imagePaths []string, chatI
 	// Enable thinking blocks.
 	args = append(args, "--thinking")
 
+	// Add permission port if configured (0 = disabled)
+	if s.permissionPort > 0 {
+		args = append(args, "--permission-port", fmt.Sprintf("%d", s.permissionPort))
+	}
+
 	for _, imagePath := range imagePaths {
 		if imagePath == "" {
 			continue
@@ -263,6 +272,10 @@ func (s *opencodeSession) handleEvent(raw map[string]any) {
 		s.handleStepFinish(raw)
 	case "error":
 		s.handleError(raw)
+	case "permission_asked":
+		s.handlePermissionAsked(raw)
+	case "permission_server":
+		s.handlePermissionServer(raw)
 	default:
 		b, _ := json.Marshal(raw)
 		slog.Debug("opencodeSession: unhandled event", "type", eventType, "raw", string(b))
@@ -456,8 +469,89 @@ func (s *opencodeSession) handleStepFinish(raw map[string]any) {
 	slog.Debug("opencodeSession: step finished", "reason", reason, "session_id", s.CurrentSessionID())
 }
 
-// RespondPermission is a no-op — OpenCode handles permissions internally.
-func (s *opencodeSession) RespondPermission(_ string, _ core.PermissionResult) error {
+func (s *opencodeSession) handlePermissionServer(raw map[string]any) {
+	port, _ := raw["port"].(float64)
+	url, _ := raw["url"].(string)
+	s.permissionPort = int(port)
+	s.permissionServerURL = url
+	slog.Info("opencodeSession: permission server started", "port", port, "url", url)
+}
+
+func (s *opencodeSession) handlePermissionAsked(raw map[string]any) {
+	permission, _ := raw["permission"].(map[string]any)
+	if permission == nil {
+		slog.Warn("opencodeSession: permission_asked event has no permission object")
+		return
+	}
+
+	requestID, _ := permission["id"].(string)
+	permType, _ := permission["permission"].(string)
+	patterns := extractPatterns(permission)
+
+	slog.Info("opencodeSession: permission asked", "request_id", requestID, "type", permType, "patterns", patterns)
+
+	evt := core.Event{
+		Type:         core.EventPermissionRequest,
+		RequestID:    requestID,
+		ToolName:     permType,
+		ToolInput:    fmt.Sprintf("%v", patterns),
+		ToolInputRaw: permission,
+	}
+	select {
+	case s.events <- evt:
+	case <-s.ctx.Done():
+		return
+	}
+}
+
+func extractPatterns(permission map[string]any) []string {
+	patternsRaw, _ := permission["patterns"].([]any)
+	var patterns []string
+	for _, p := range patternsRaw {
+		if ps, ok := p.(string); ok {
+			patterns = append(patterns, ps)
+		}
+	}
+	return patterns
+}
+
+func (s *opencodeSession) RespondPermission(requestID string, result core.PermissionResult) error {
+	if s.permissionServerURL == "" {
+		slog.Warn("opencodeSession: no permission server URL, cannot respond", "request_id", requestID)
+		return nil
+	}
+
+	reply := "once"
+	if result.Behavior == "deny" {
+		reply = "reject"
+	}
+
+	slog.Info("opencodeSession: RespondPermission called", "request_id", requestID, "reply", reply)
+
+	url := fmt.Sprintf("%s/permission/%s/reply", s.permissionServerURL, requestID)
+	body := map[string]string{"reply": reply}
+	if result.Message != "" {
+		body["message"] = result.Message
+	}
+
+	jsonBody, err := json.Marshal(body)
+	if err != nil {
+		return fmt.Errorf("opencodeSession: marshal permission reply: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(s.ctx, "POST", url, bytes.NewReader(jsonBody))
+	if err != nil {
+		return fmt.Errorf("opencodeSession: create permission request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("opencodeSession: send permission reply: %w", err)
+	}
+	defer resp.Body.Close()
+
+	slog.Info("opencodeSession: permission reply sent", "request_id", requestID, "status", resp.Status)
 	return nil
 }
 
