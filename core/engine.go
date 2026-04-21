@@ -2576,6 +2576,15 @@ func (e *Engine) closeAgentSessionWithTimeout(sessionKey string, agentSession Ag
 
 const defaultEventIdleTimeout = 2 * time.Hour
 
+type agentErrorHandler struct {
+	contains string
+	msgKey   MsgKey
+}
+
+var agentErrorHandlers = []agentErrorHandler{
+	{"Session not found", MsgSessionNotFound},
+}
+
 func (e *Engine) processInteractiveEvents(state *interactiveState, session *Session, sessions *SessionManager, sessionKey string, msgID string, turnStart time.Time, stopTypingFn func(), sendDone <-chan error, replyCtx any) {
 	var textParts []string
 	var segmentStart int // index into textParts: text before this has been sent/displayed
@@ -3208,6 +3217,7 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 			cp.Finalize(ProgressCardStateFailed)
 			sp.discard()
 			if event.Error != nil {
+				errMsg := event.Error.Error()
 				slog.Error("agent error", "error", event.Error)
 				e.hooks.Emit(HookEvent{
 					Event:      HookEventError,
@@ -3215,7 +3225,14 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 					Platform:   p.Name(),
 					Error:      event.Error.Error(),
 				})
-				e.send(p, replyCtx, fmt.Sprintf(e.i18n.T(MsgError), event.Error))
+				userMsg := fmt.Sprintf(e.i18n.T(MsgError), errMsg)
+				for _, h := range agentErrorHandlers {
+					if strings.Contains(errMsg, h.contains) {
+						userMsg = e.i18n.T(h.msgKey)
+						break
+					}
+				}
+				e.send(p, replyCtx, userMsg)
 			}
 			// Only drop queued messages if the agent session is dead.
 			// Some agents (e.g. Codex) emit EventError for per-turn failures
