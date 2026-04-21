@@ -33,6 +33,7 @@ type Agent struct {
 	model                string
 	mode                 string
 	cmd                  string // CLI binary name, default "opencode"
+	permissionPort       int    // port for permission HTTP server (0 = disabled)
 	providers            []core.ProviderConfig
 	activeIdx            int
 	sessionEnv           []string
@@ -71,6 +72,12 @@ func New(opts map[string]any) (core.Agent, error) {
 	}
 	ccDataDir, _ := opts["cc_data_dir"].(string)
 	ccProject, _ := opts["cc_project"].(string)
+	permissionPort := 0
+	if p, ok := opts["permission_port"].(int); ok {
+		permissionPort = p
+	} else if p64, ok := opts["permission_port"].(int64); ok {
+		permissionPort = int(p64)
+	}
 	modelCachePath := opencodeProjectModelCachePath(ccDataDir, ccProject)
 	persistentModelCache, err := loadOpencodePersistentModelCache(modelCachePath)
 	if err != nil {
@@ -86,6 +93,7 @@ func New(opts map[string]any) (core.Agent, error) {
 		model:                model,
 		mode:                 mode,
 		cmd:                  cmd,
+		permissionPort:       permissionPort,
 		activeIdx:            -1,
 		modelCachePath:       modelCachePath,
 		persistentModelCache: persistentModelCache,
@@ -459,6 +467,7 @@ func (a *Agent) StartSession(ctx context.Context, sessionID string) (core.AgentS
 	mode := a.mode
 	cmd := a.cmd
 	workDir := a.workDir
+	permissionPort := a.permissionPort
 	extraEnv := a.providerEnvLocked()
 	extraEnv = append(extraEnv, a.sessionEnv...)
 	if a.activeIdx >= 0 && a.activeIdx < len(a.providers) {
@@ -468,7 +477,7 @@ func (a *Agent) StartSession(ctx context.Context, sessionID string) (core.AgentS
 	}
 	a.mu.Unlock()
 
-	return newOpencodeSession(ctx, cmd, workDir, model, mode, sessionID, extraEnv)
+	return newOpencodeSession(ctx, cmd, workDir, model, mode, permissionPort, sessionID, extraEnv)
 }
 
 // ListSessions runs `opencode session list` and parses the JSON output.

@@ -56,7 +56,7 @@ func TestOpencodeSessionEntry_Unmarshal(t *testing.T) {
 // the ContinueSession sentinel (__continue__) is not passed as a literal
 // session ID to the CLI. This was fixed in PR #249.
 func TestNewOpencodeSession_ContinueSessionTreatedAsFresh(t *testing.T) {
-	s, err := newOpencodeSession(context.Background(), "echo", "/tmp", "", "default", core.ContinueSession, nil)
+	s, err := newOpencodeSession(context.Background(), "echo", "/tmp", "", "default", 0, core.ContinueSession, nil)
 	if err != nil {
 		t.Fatalf("newOpencodeSession: %v", err)
 	}
