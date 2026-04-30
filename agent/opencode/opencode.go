@@ -72,7 +72,7 @@ func New(opts map[string]any) (core.Agent, error) {
 	}
 	ccDataDir, _ := opts["cc_data_dir"].(string)
 	ccProject, _ := opts["cc_project"].(string)
-	permissionPort := 0
+	permissionPort := -1
 	if p, ok := opts["permission_port"].(int); ok {
 		permissionPort = p
 	} else if p64, ok := opts["permission_port"].(int64); ok {

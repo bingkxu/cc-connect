@@ -89,7 +89,7 @@ func (s *opencodeSession) Send(prompt string, images []core.ImageAttachment, fil
 	// Enable thinking blocks
 	args = append(args, "--thinking")
 
-	if s.permissionPort > 0 {
+	if s.permissionPort >= 0 {
 		args = append(args, "--permission-port", fmt.Sprintf("%d", s.permissionPort))
 	}
 
