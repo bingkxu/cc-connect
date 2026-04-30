@@ -82,6 +82,10 @@ func (s *opencodeSession) Send(prompt string, images []core.ImageAttachment, fil
 
 	args := s.buildRunArgs(prompt, imagePaths, chatID)
 
+	// Append prompt as positional arg
+	args = append(args, prompt)
+>>>>>>> 5673a2f0 (fix(opencode): support permission_port=0 for dynamic port allocation)
+
 	slog.Debug("opencodeSession: launching", "resume", isResume, "args", core.RedactArgs(args))
 
 	cmd := exec.CommandContext(s.ctx, s.cmd, args...)
@@ -167,8 +171,8 @@ func (s *opencodeSession) buildRunArgs(prompt string, imagePaths []string, chatI
 	// Enable thinking blocks.
 	args = append(args, "--thinking")
 
-	// Add permission port if configured (0 = disabled)
-	if s.permissionPort > 0 {
+	// Add permission port if configured (0 = dynamic allocation, -1 = disabled)
+	if s.permissionPort >= 0 {
 		args = append(args, "--permission-port", fmt.Sprintf("%d", s.permissionPort))
 	}
 
