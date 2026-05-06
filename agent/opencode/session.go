@@ -82,10 +82,6 @@ func (s *opencodeSession) Send(prompt string, images []core.ImageAttachment, fil
 
 	args := s.buildRunArgs(prompt, imagePaths, chatID)
 
-	// Append prompt as positional arg
-	args = append(args, prompt)
->>>>>>> 5673a2f0 (fix(opencode): support permission_port=0 for dynamic port allocation)
-
 	slog.Debug("opencodeSession: launching", "resume", isResume, "args", core.RedactArgs(args))
 
 	cmd := exec.CommandContext(s.ctx, s.cmd, args...)
@@ -103,6 +99,7 @@ func (s *opencodeSession) Send(prompt string, images []core.ImageAttachment, fil
 
 	var stderrBuf bytes.Buffer
 	cmd.Stderr = &stderrBuf
+	cmd.Stdin = strings.NewReader(prompt)
 
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("opencodeSession: start: %w", err)
@@ -183,9 +180,6 @@ func (s *opencodeSession) buildRunArgs(prompt string, imagePaths []string, chatI
 		args = append(args, "--file", imagePath)
 	}
 
-	// Use "--" to separate flags from the positional prompt so that
-	// --file (yargs [array]) does not greedily consume the prompt text.
-	args = append(args, "--", prompt)
 	return args
 }
 
