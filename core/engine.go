@@ -1151,6 +1151,21 @@ func (e *Engine) ExecuteCronJob(job *CronJob) error {
 		}
 		e.processInteractiveMessageWith(effectivePlatform, msg, session, agent, sessions, iKey, workspaceDir, runSessionKey)
 		e.cleanupInteractiveState(iKey)
+
+		if job.AutoArchive {
+			if agentSID := session.GetAgentSessionID(); agentSID != "" {
+				if archiver, ok := agent.(SessionArchiver); ok {
+					go func() {
+						if err := archiver.ArchiveSession(agentSID); err != nil {
+							slog.Warn("cron: auto-archive failed", "job", job.ID, "session", agentSID, "error", err)
+						} else {
+							slog.Info("cron: auto-archived session", "job", job.ID, "session", agentSID)
+						}
+					}()
+				}
+			}
+		}
+
 		return nil
 	}
 

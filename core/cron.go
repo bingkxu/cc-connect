@@ -34,6 +34,7 @@ type CronJob struct {
 	SessionMode string    `json:"session_mode,omitempty"` // "" or "reuse" = share active session; "new_per_run" = fresh session each run
 	Mode        string    `json:"mode,omitempty"`         // permission mode override for this job; "" = use project default
 	TimeoutMins *int      `json:"timeout_mins,omitempty"` // nil = default 30m wait; 0 = no limit; >0 = minutes
+	AutoArchive bool      `json:"auto_archive,omitempty"` // archive opencode session after new_per_run completes
 	CreatedAt   time.Time `json:"created_at"`
 	LastRun     time.Time `json:"last_run,omitempty"`
 	LastError   string    `json:"last_error,omitempty"`
@@ -358,6 +359,11 @@ func updateJobField(job *CronJob, field string, value any) error {
 		}
 		if v, ok := value.(int); ok {
 			job.TimeoutMins = &v
+			return nil
+		}
+	case "auto_archive":
+		if v, ok := value.(bool); ok {
+			job.AutoArchive = v
 			return nil
 		}
 	}

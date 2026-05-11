@@ -464,6 +464,11 @@ type SessionDeleter interface {
 	DeleteSession(ctx context.Context, sessionID string) error
 }
 
+// SessionArchiver is an optional interface for agents that support archiving sessions.
+type SessionArchiver interface {
+	ArchiveSession(sessionID string) error
+}
+
 type SessionTitleProvider interface {
 	GetSessionTitle(sessionID string) string
 }

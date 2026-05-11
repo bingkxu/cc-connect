@@ -1533,6 +1533,7 @@ func (m *ManagementServer) handleCron(w http.ResponseWriter, r *http.Request) {
 			SessionMode: NormalizeCronSessionMode(req.SessionMode),
 			Mode:        req.Mode,
 			TimeoutMins: req.TimeoutMins,
+			AutoArchive: req.AutoArchive,
 			CreatedAt:   time.Now(),
 		}
 		if err := m.cronScheduler.AddJob(job); err != nil {

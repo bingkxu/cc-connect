@@ -15,6 +15,7 @@ export interface CronJob {
   session_mode: string;
   mode: string;
   timeout_mins: number | null;
+  auto_archive: boolean;
   created_at: string;
   last_run: string;
   last_error: string;

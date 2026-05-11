@@ -696,24 +696,79 @@ func (a *Agent) GetSessionTitle(sessionID string) string {
 	return querySessionTitle(sessionID)
 }
 
+// ArchiveSession implements core.SessionArchiver by setting time_archived on
+// the opencode session directly via sqlite3. It tries both opencode.db and
+// opencode-local.db to handle both release and dev installations.
+func (a *Agent) ArchiveSession(sessionID string) error {
+	dbPaths := opencodeAllDBPaths()
+	if len(dbPaths) == 0 {
+		return fmt.Errorf("opencode: no database files found")
+	}
+	sqlite3, err := exec.LookPath("sqlite3")
+	if err != nil {
+		return fmt.Errorf("opencode: sqlite3 not found: %w", err)
+	}
+	escaped := strings.ReplaceAll(sessionID, "'", "''")
+	now := time.Now().UnixMilli()
+	stmt := fmt.Sprintf(
+		"UPDATE session SET time_archived = %d WHERE id = '%s' AND time_archived IS NULL",
+		now, escaped,
+	)
+	for _, dbPath := range dbPaths {
+		if _, err := os.Stat(dbPath); err != nil {
+			continue
+		}
+		out, err := exec.Command(sqlite3, dbPath, stmt).CombinedOutput()
+		if err != nil {
+			slog.Warn("opencode: archive session failed", "db", dbPath, "session", sessionID, "err", err, "output", strings.TrimSpace(string(out)))
+			continue
+		}
+		slog.Info("opencode: archived session", "db", dbPath, "session", sessionID)
+		return nil
+	}
+	return fmt.Errorf("opencode: session %s not found in any database", sessionID)
+}
+
 func querySessionTitle(sessionID string) string {
-	dbPath := opencodeDBPath()
-	if dbPath == "" {
-		return ""
-	}
-	if _, err := os.Stat(dbPath); err != nil {
-		return ""
-	}
+	dbPaths := opencodeAllDBPaths()
 	sqlite3, err := exec.LookPath("sqlite3")
 	if err != nil {
 		return ""
 	}
 	escaped := strings.ReplaceAll(sessionID, "'", "''")
 	query := fmt.Sprintf("SELECT title FROM session WHERE id = '%s' LIMIT 1", escaped)
-	out, err := exec.Command(sqlite3, dbPath, query).Output()
-	if err != nil {
-		return ""
+	for _, dbPath := range dbPaths {
+		if _, err := os.Stat(dbPath); err != nil {
+			continue
+		}
+		out, err := exec.Command(sqlite3, dbPath, query).Output()
+		if err != nil {
+			continue
+		}
+		if title := strings.TrimSpace(string(out)); title != "" {
+			return title
+		}
 	}
-	title := strings.TrimSpace(string(out))
-	return title
+	return ""
+}
+
+// opencodeAllDBPaths returns candidate database file paths (release + dev).
+func opencodeAllDBPaths() []string {
+	base := func() string {
+		if xdg := os.Getenv("XDG_DATA_HOME"); xdg != "" {
+			return filepath.Join(xdg, "opencode")
+		}
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return ""
+		}
+		return filepath.Join(home, ".local", "share", "opencode")
+	}()
+	if base == "" {
+		return nil
+	}
+	return []string{
+		filepath.Join(base, "opencode.db"),
+		filepath.Join(base, "opencode-local.db"),
+	}
 }
